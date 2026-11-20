@@ -193,6 +193,7 @@ dependencies = [
  "eframe",
  "platform-macos",
  "spi",
+ "tokio",
 ]
 
 [[package]]
