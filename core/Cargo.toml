@@ -5,5 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 spi = { path = "../spi" }
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+toml = "0.8"

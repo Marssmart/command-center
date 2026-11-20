@@ -1,0 +1,47 @@
+# SIMULATED example floor plan. None of these values are measured.
+# Replace every value with real measurements before reading anything into the results.
+# Coordinates are metres. The room spans east 0..width_m and north 0..depth_m.
+
+[room]
+width_m = 10.0
+depth_m = 8.0
+
+[sensor]
+# Where the scanning device sits.
+position_m = [5.0, 4.0]
+# Standard deviation of the compass heading error.
+heading_noise_deg = 8.0
+
+[path_loss]
+# RSSI at 1 m, and the log-distance path-loss exponent.
+tx_power_dbm = -59.0
+exponent = 2.5
+# Standard deviation of the log-normal shadowing noise.
+rssi_noise_db = 3.0
+# Peak RSSI gain when the sensor faces a transmitter (simple directional pattern).
+directivity_db = 6.0
+
+[simulation]
+seed = 42
+# Headings sampled evenly over one full turn.
+sweep_steps = 72
+# Initial steps excluded from distance scoring while smoothing settles.
+warmup_steps = 8
+# Independent full turns, each with its own seed derived from `seed`.
+trials = 50
+
+[[anchors]]
+id = "sim-beacon-north-west"
+position_m = [1.5, 6.5]
+
+[[anchors]]
+id = "sim-beacon-south-east"
+position_m = [8.5, 1.5]
+
+[[anchors]]
+id = "sim-beacon-north-east"
+position_m = [9.0, 7.0]
+
+[[anchors]]
+id = "sim-beacon-south-west"
+position_m = [1.0, 1.0]
