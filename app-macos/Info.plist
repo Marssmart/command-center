@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Command Center scans nearby Bluetooth devices to detect possible tracking hardware.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>Command Center uses location access to correlate Wi-Fi and Bluetooth scans with where they were captured.</string>
+</dict>
+</plist>

@@ -8,3 +8,14 @@ publish.workspace = true
 core = { path = "../core" }
 spi = { path = "../spi" }
 platform-macos = { path = "../platform-macos" }
+
+[package.metadata.packager]
+product-name = "Command Center"
+identifier = "com.marssmart.commandcenter"
+description = "macOS counter-surveillance tool"
+formats = ["app", "dmg"]
+
+[package.metadata.packager.macos]
+# Ad-hoc signature; no Developer ID is available.
+signing-identity = "-"
+info-plist-path = "Info.plist"
