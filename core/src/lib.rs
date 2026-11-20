@@ -1,7 +1,9 @@
 //! Platform-free core logic: data model, algorithms, producers and pipes.
 
+pub mod bus;
 pub mod model;
 
+pub use bus::{SampleHub, Subscription};
 pub use model::{DeviceState, ScreenFrame};
 pub use spi::{RadioSample, Transport};
 
