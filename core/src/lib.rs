@@ -6,6 +6,7 @@ pub mod bus;
 pub mod fusion;
 pub mod model;
 pub mod pipes;
+pub mod playback;
 pub mod ranging;
 
 pub use algorithm::{Algorithm, AlgorithmRegistry};
@@ -14,6 +15,7 @@ pub use bus::{SampleHub, Subscription};
 pub use fusion::Fusion;
 pub use model::{DeviceState, ScreenFrame};
 pub use pipes::{run_pipeline, FramePipe, Pipeline};
+pub use playback::Playback;
 pub use ranging::RssiRanging;
 pub use spi::{RadioSample, Transport};
 
