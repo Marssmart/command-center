@@ -3,6 +3,7 @@
 pub mod algorithm;
 pub mod bearing;
 pub mod bus;
+pub mod calibration;
 pub mod fusion;
 pub mod model;
 pub mod pipes;
