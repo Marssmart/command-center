@@ -9,6 +9,7 @@ core = { path = "../core" }
 spi = { path = "../spi" }
 platform-macos = { path = "../platform-macos" }
 eframe = "0.37.0"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [package.metadata.packager]
 product-name = "Command Center"

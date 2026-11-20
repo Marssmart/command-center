@@ -24,12 +24,17 @@ use std::time::{Duration, Instant};
 const WIFI_SCAN_INTERVAL: Duration = Duration::from_secs(5);
 const BLE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Entry point for the macOS platform implementations.
+/// Entry point for the macOS platform implementations. Not `Send`, because it owns Objective-C managers.
 pub struct MacosPlatform {
     epoch: Instant,
-    scan: Option<ActiveScan>,
     location: Option<Retained<CLLocationManager>>,
     central: Option<Retained<CBCentralManager>>,
+}
+
+/// Radio scanner that can move to the sample hub. It holds only thread handles.
+pub struct MacosScanner {
+    epoch: Instant,
+    scan: Option<ActiveScan>,
 }
 
 struct ActiveScan {
@@ -41,9 +46,16 @@ impl MacosPlatform {
     pub fn new() -> Self {
         Self {
             epoch: Instant::now(),
-            scan: None,
             location: None,
             central: None,
+        }
+    }
+
+    /// A scanner that stamps samples on this platform's clock.
+    pub fn scanner(&self) -> MacosScanner {
+        MacosScanner {
+            epoch: self.epoch,
+            scan: None,
         }
     }
 }
@@ -60,7 +72,7 @@ impl Clock for MacosPlatform {
     }
 }
 
-impl RadioScanner for MacosPlatform {
+impl RadioScanner for MacosScanner {
     fn start(&mut self, sink: Sender<RadioSample>) -> Result<(), SpiError> {
         if self.scan.is_some() {
             return Ok(());
