@@ -16,3 +16,7 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+## Package a macOS DMG
+
+The `macos-dmg` GitHub Actions workflow builds `app-macos` and packages a `.app` and `.dmg` with cargo-packager 0.11.8. The bundle is ad-hoc signed (no Developer ID, not notarized). Tags `v*` also attach the DMG to a GitHub release.

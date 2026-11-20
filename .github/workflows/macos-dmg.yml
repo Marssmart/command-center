@@ -1,0 +1,50 @@
+name: macOS DMG
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo (including installed tools)
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: "true"
+
+      - name: Install cargo-packager (pinned)
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build release binary
+        run: cargo build --release -p app-macos
+
+      - name: Package .app and .dmg (ad-hoc signed)
+        run: cargo-packager --release --packages app-macos --formats app,dmg
+
+      - name: Verify signature and DMG
+        run: |
+          codesign --verify --deep --strict "target/release/Command Center.app"
+          hdiutil verify target/release/*.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: command-center-macos-dmg
+          path: target/release/*.dmg
+          if-no-files-found: error
+
+      - name: Attach DMG to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/*.dmg
