@@ -3,6 +3,7 @@
 pub mod algorithm;
 pub mod bearing;
 pub mod bus;
+pub mod fusion;
 pub mod model;
 pub mod pipes;
 pub mod ranging;
@@ -10,6 +11,7 @@ pub mod ranging;
 pub use algorithm::{Algorithm, AlgorithmRegistry};
 pub use bearing::BearingEstimator;
 pub use bus::{SampleHub, Subscription};
+pub use fusion::Fusion;
 pub use model::{DeviceState, ScreenFrame};
 pub use pipes::{run_pipeline, FramePipe, Pipeline};
 pub use ranging::RssiRanging;

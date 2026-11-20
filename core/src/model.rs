@@ -15,6 +15,8 @@ pub struct DeviceState {
     pub distance_m: Option<f64>,
     /// Estimated bearing in degrees clockwise from north, if known.
     pub bearing_deg: Option<f64>,
+    /// Estimated (east, north) offset from the user in metres, once fused from distance and bearing.
+    pub position_m: Option<(f64, f64)>,
 }
 
 impl DeviceState {
@@ -27,6 +29,7 @@ impl DeviceState {
             last_seen: sample.observed_at,
             distance_m: None,
             bearing_deg: None,
+            position_m: None,
         }
     }
 
