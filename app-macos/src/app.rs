@@ -2,6 +2,7 @@ use core::{
     run_pipeline, Algorithm, BearingEstimator, DeviceState, Fusion, FramePipe, Playback, Pipeline,
     RssiRanging, SampleHub, ScreenFrame,
 };
+use crate::view3d::{self, Orbit};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Stroke};
 use std::cmp::Reverse;
 use std::time::Duration;
@@ -22,17 +23,19 @@ pub enum Tab {
     Overview,
     Devices,
     Map,
+    View3d,
     Signals,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Overview, Tab::Devices, Tab::Map, Tab::Signals];
+    pub const ALL: [Tab; 5] = [Tab::Overview, Tab::Devices, Tab::Map, Tab::View3d, Tab::Signals];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
             Tab::Devices => "Devices",
             Tab::Map => "Map",
+            Tab::View3d => "3D",
             Tab::Signals => "Signals",
         }
     }
@@ -47,6 +50,7 @@ pub struct ShellApp {
     frames: broadcast::Receiver<ScreenFrame>,
     pipeline: Option<JoinHandle<()>>,
     playback: Playback,
+    orbit: Orbit,
     status: Option<String>,
 }
 
@@ -62,6 +66,7 @@ impl ShellApp {
             frames,
             pipeline: None,
             playback: Playback::new(HISTORY_FRAMES),
+            orbit: Orbit::default(),
             status: None,
         }
     }
@@ -154,6 +159,7 @@ impl eframe::App for ShellApp {
                 Tab::Overview => overview(ui, self.is_running(), frame),
                 Tab::Devices => devices(ui, frame),
                 Tab::Map => map(ui, frame),
+            Tab::View3d => view3d::show(ui, &mut self.orbit, frame),
                 Tab::Signals => signals(ui, frame),
             }
         });
@@ -282,7 +288,7 @@ mod tests {
     #[test]
     fn tab_titles_are_unique_and_ordered() {
         let titles: Vec<_> = Tab::ALL.iter().map(|t| t.title()).collect();
-        assert_eq!(titles, ["Overview", "Devices", "Map", "Signals"]);
+        assert_eq!(titles, ["Overview", "Devices", "Map", "3D", "Signals"]);
     }
 
     #[test]
