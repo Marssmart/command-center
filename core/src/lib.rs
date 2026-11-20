@@ -4,11 +4,13 @@ pub mod algorithm;
 pub mod bus;
 pub mod model;
 pub mod pipes;
+pub mod ranging;
 
 pub use algorithm::{Algorithm, AlgorithmRegistry};
 pub use bus::{SampleHub, Subscription};
 pub use model::{DeviceState, ScreenFrame};
 pub use pipes::{run_pipeline, FramePipe, Pipeline};
+pub use ranging::RssiRanging;
 pub use spi::{RadioSample, Transport};
 
 #[cfg(test)]
