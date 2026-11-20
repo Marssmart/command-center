@@ -1,4 +1,5 @@
 mod app;
+mod view3d;
 
 use eframe::egui;
 use platform_macos::MacosPlatform;
