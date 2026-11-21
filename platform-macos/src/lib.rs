@@ -13,7 +13,7 @@ use objc2_core_location::{CLAuthorizationStatus, CLLocationManager};
 use objc2_core_wlan::CWWiFiClient;
 use spi::{
     Clock, Permission, PermissionProvider, PermissionStatus, RadioSample, RadioScanner,
-    RangingProvider, SpiError, Storage, Transport,
+    RangingProvider, SampleDetails, SpiError, Storage, Transport,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -229,14 +229,29 @@ async fn ble_sample(
 ) -> Option<RadioSample> {
     let peripheral = adapter.peripheral(id).await.ok()?;
     let props = peripheral.properties().await.ok()??;
+    let manufacturer: Vec<(u16, &[u8])> = props
+        .manufacturer_data
+        .iter()
+        .map(|(company, data)| (*company, data.as_slice()))
+        .collect();
+    let services: Vec<u128> = props.services.iter().map(|uuid| uuid.as_u128()).collect();
+    let mut manufacturer_ids: Vec<u16> = manufacturer.iter().map(|(company, _)| *company).collect();
+    manufacturer_ids.sort_unstable();
+    let details = SampleDetails {
+        manufacturer_ids,
+        service_uuids: services.clone(),
+        payload_hash: spi::ble_payload_hash(manufacturer.iter().copied(), services.iter().copied()),
+        ssid: None,
+    };
+
     let device_id = match identities.get(id) {
         Some(known) => known.clone(),
         None => {
             // Fixed on first sight: a later advertisement that adds data must not change the id.
             // Peripherals with no advertised data yet are skipped until some arrives.
             let fingerprint = spi::ble_fingerprint(
-                props.manufacturer_data.iter().map(|(c, d)| (*c, d.as_slice())),
-                props.services.iter().map(|uuid| uuid.as_u128()),
+                manufacturer.iter().copied(),
+                services.iter().copied(),
             )?;
             identities.insert(id.clone(), fingerprint.clone());
             fingerprint
@@ -247,6 +262,7 @@ async fn ble_sample(
         device_id,
         rssi_dbm: props.rssi?,
         observed_at: epoch.elapsed(),
+        details,
     })
 }
 
@@ -280,20 +296,30 @@ fn scan_wifi_once(epoch: Instant) -> Vec<RadioSample> {
         .iter()
         .filter_map(|network| {
             let bssid = unsafe { network.bssid() }.map(|b| b.to_string());
+            let ssid = unsafe { network.ssid() }.map(|s| s.to_string());
             let rssi = unsafe { network.rssiValue() };
-            wifi_sample(bssid.as_deref(), rssi, epoch.elapsed())
+            wifi_sample(bssid.as_deref(), ssid, rssi, epoch.elapsed())
         })
         .collect()
 }
 
 /// Builds a Wi-Fi sample; networks without a BSSID (no location permission) are skipped.
-fn wifi_sample(bssid: Option<&str>, rssi: isize, observed_at: Duration) -> Option<RadioSample> {
+fn wifi_sample(
+    bssid: Option<&str>,
+    ssid: Option<String>,
+    rssi: isize,
+    observed_at: Duration,
+) -> Option<RadioSample> {
     let device_id = bssid?.to_string();
     Some(RadioSample {
         transport: Transport::Wifi,
         device_id,
         rssi_dbm: rssi.clamp(i16::MIN as isize, i16::MAX as isize) as i16,
         observed_at,
+        details: SampleDetails {
+            ssid,
+            ..Default::default()
+        },
     })
 }
 
@@ -358,12 +384,12 @@ mod tests {
 
     #[test]
     fn wifi_sample_skips_networks_without_bssid() {
-        assert!(wifi_sample(None, -50, Duration::ZERO).is_none());
+        assert!(wifi_sample(None, None, -50, Duration::ZERO).is_none());
     }
 
     #[test]
     fn wifi_sample_keeps_bssid_and_clamps_rssi() {
-        let sample = wifi_sample(Some("aa:bb:cc:dd:ee:ff"), -100_000, Duration::from_secs(2)).unwrap();
+        let sample = wifi_sample(Some("aa:bb:cc:dd:ee:ff"), None, -100_000, Duration::from_secs(2)).unwrap();
         assert_eq!(sample.transport, Transport::Wifi);
         assert_eq!(sample.device_id, "aa:bb:cc:dd:ee:ff");
         assert_eq!(sample.rssi_dbm, i16::MIN);

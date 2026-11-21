@@ -1,5 +1,6 @@
 //! 3D view: devices placed in east/north/height space and projected with a draggable orbit.
 
+use crate::app::nearest_click;
 use core::ScreenFrame;
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke};
 
@@ -42,8 +43,13 @@ pub fn signal_height_m(rssi_dbm: i16) -> f32 {
     ((f32::from(rssi_dbm) + 100.0) / 70.0).clamp(0.0, 1.0) * MAX_HEIGHT_M
 }
 
-pub fn show(ui: &mut egui::Ui, orbit: &mut Orbit, frame: Option<&ScreenFrame>) {
-    let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::drag());
+pub fn show(
+    ui: &mut egui::Ui,
+    orbit: &mut Orbit,
+    frame: Option<&ScreenFrame>,
+    selected: Option<&str>,
+) -> Option<String> {
+    let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
     let delta = response.drag_delta();
     orbit.yaw += delta.x * 0.01;
     orbit.pitch = (orbit.pitch - delta.y * 0.01).clamp(PITCH_LIMITS.0, PITCH_LIMITS.1);
@@ -70,15 +76,21 @@ pub fn show(ui: &mut egui::Ui, orbit: &mut Orbit, frame: Option<&ScreenFrame>) {
         );
     }
 
-    let Some(frame) = frame else {
-        return;
-    };
+    let frame = frame?;
+    let mut points = Vec::new();
     for device in &frame.devices {
         match (device.position_m, device.distance_m) {
             (Some((east, north)), _) => {
                 let height = signal_height_m(device.last_rssi_dbm);
                 let point = project([east as f32, north as f32, height], *orbit, origin);
-                painter.circle_filled(point, 5.0, Color32::LIGHT_BLUE);
+                let is_selected = selected == Some(device.device_id.as_str());
+                let (radius, fill) = if is_selected {
+                    (7.0, Color32::WHITE)
+                } else {
+                    (5.0, Color32::LIGHT_BLUE)
+                };
+                painter.circle_filled(point, radius, fill);
+                points.push((device.device_id.clone(), point));
                 painter.text(
                     point + egui::vec2(8.0, 0.0),
                     egui::Align2::LEFT_CENTER,
@@ -94,6 +106,7 @@ pub fn show(ui: &mut egui::Ui, orbit: &mut Orbit, frame: Option<&ScreenFrame>) {
             (None, None) => {}
         }
     }
+    nearest_click(&response, &points, 12.0)
 }
 
 fn draw_ground_ring(painter: &egui::Painter, orbit: Orbit, origin: Pos2, radius_m: f32) {

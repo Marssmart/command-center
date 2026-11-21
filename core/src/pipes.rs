@@ -129,6 +129,7 @@ mod tests {
             device_id: "beacon".into(),
             rssi_dbm: rssi,
             observed_at: Duration::from_secs(secs),
+            details: Default::default(),
         }
     }
 

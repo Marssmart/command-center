@@ -112,6 +112,7 @@ mod tests {
             device_id: "ap".into(),
             rssi_dbm: -50,
             observed_at: Duration::from_secs(3),
+            details: Default::default(),
         };
         let mut frame = ScreenFrame::default();
         algorithm.apply(&sample, &mut frame);

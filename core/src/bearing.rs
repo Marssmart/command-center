@@ -169,6 +169,7 @@ mod tests {
             device_id: "ap".into(),
             rssi_dbm: rssi,
             observed_at: Duration::from_secs(1),
+            details: Default::default(),
         }
     }
 
