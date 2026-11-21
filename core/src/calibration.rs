@@ -18,7 +18,8 @@ use serde::Deserialize;
 use spi::{RadioSample, Transport};
 use std::f64::consts::PI;
 use std::fmt::Write as _;
-use std::sync::{Arc, Mutex};
+use spi::ManualFacing;
+use std::sync::Arc;
 use std::time::Duration;
 
 const MIN_ANCHOR_DISTANCE_M: f64 = 0.5;
@@ -160,18 +161,14 @@ pub fn run(plan: &FloorPlan) -> Report {
 /// One full turn of the sensor. Appends the errors of this turn to `errors`.
 fn simulate_turn(plan: &FloorPlan, truths: &[Truth], seed: u64, errors: &mut [Errors]) {
     let mut rng = SplitMix64::new(seed);
-    let heading = Arc::new(Mutex::new(0.0_f64));
-    let heading_source = Arc::clone(&heading);
+    let facing = Arc::new(ManualFacing::new());
     let algorithms: Vec<Box<dyn Algorithm>> = vec![
         Box::new(RssiRanging::new(
             plan.path_loss.tx_power_dbm,
             plan.path_loss.exponent,
             SMOOTHING,
         )),
-        Box::new(BearingEstimator::new(
-            move || Some(*heading_source.lock().expect("heading lock poisoned")),
-            HEADING_WINDOW,
-        )),
+        Box::new(BearingEstimator::new(facing.clone(), HEADING_WINDOW)),
         Box::new(Fusion::default()),
     ];
     let mut pipeline = Pipeline::new(algorithms);
@@ -181,7 +178,7 @@ fn simulate_turn(plan: &FloorPlan, truths: &[Truth], seed: u64, errors: &mut [Er
     for step in 0..steps {
         let true_heading = step as f64 * 360.0 / steps as f64;
         let observed_heading = true_heading + rng.gaussian() * plan.sensor.heading_noise_deg;
-        *heading.lock().expect("heading lock poisoned") = observed_heading.rem_euclid(360.0);
+        facing.set(Some(observed_heading.rem_euclid(360.0)));
 
         for (truth, errs) in truths.iter().zip(errors.iter_mut()) {
             let facing_gain = plan.path_loss.directivity_db

@@ -1,7 +1,9 @@
 use core::{
     run_pipeline, Algorithm, BearingEstimator, DeviceState, Fusion, FramePipe, Playback, Pipeline,
-    RssiRanging, SampleHub, ScreenFrame,
+    RssiRanging, SampleHub, ScreenFrame, SweepBearing,
 };
+use platform_macos::CoreLocationHeading;
+use spi::{HeadingSource, ManualFacing};
 use crate::view3d::{self, Orbit};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Stroke};
 use std::cmp::Reverse;
@@ -51,6 +53,13 @@ pub struct ShellApp {
     frames: broadcast::Receiver<ScreenFrame>,
     /// Shared across pause and resume, so the device table is kept.
     pipeline: Arc<Mutex<Pipeline>>,
+    facing: Arc<ManualFacing>,
+    /// Degrees on the facing dial. Only meaningful once `facing_set` is true.
+    facing_deg: f64,
+    facing_set: bool,
+    /// Whether the Mac has a compass. When it does not, the manual dial is the only facing source.
+    compass: bool,
+    sweeping: bool,
     task: Option<JoinHandle<()>>,
     playback: Playback,
     orbit: Orbit,
@@ -61,13 +70,20 @@ impl ShellApp {
     pub fn new(hub: SampleHub, runtime: tokio::runtime::Runtime) -> Self {
         let pipe = FramePipe::new(FRAME_CAPACITY);
         let frames = pipe.subscribe();
+        let facing = Arc::new(ManualFacing::new());
+        let pipeline = Arc::new(Mutex::new(default_pipeline(facing.clone())));
         Self {
             tab: Tab::default(),
             runtime,
             hub,
             pipe,
             frames,
-            pipeline: Arc::new(Mutex::new(default_pipeline())),
+            pipeline,
+            facing,
+            facing_deg: 0.0,
+            facing_set: false,
+            compass: CoreLocationHeading::heading_available(),
+            sweeping: false,
             task: None,
             playback: Playback::new(HISTORY_FRAMES),
             orbit: Orbit::default(),
@@ -113,6 +129,69 @@ impl ShellApp {
         }
     }
 
+    fn toggle_sweep(&mut self) {
+        self.sweeping = !self.sweeping;
+        let chain = if self.sweeping {
+            sweep_chain(self.facing.clone())
+        } else {
+            default_chain(self.facing.clone())
+        };
+        self.pipeline
+            .lock()
+            .expect("pipeline lock poisoned")
+            .set_algorithms(chain);
+    }
+
+    fn set_facing(&mut self, degrees: f64) {
+        self.facing_deg = degrees.rem_euclid(360.0);
+        self.facing_set = true;
+        self.facing.set(Some(self.facing_deg));
+    }
+
+    /// Manual facing dial: drag the rose or type degrees. Bearings are relative to this value.
+    fn facing_controls(&mut self, ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(44.0), egui::Sense::click_and_drag());
+        if response.clicked() || response.dragged() {
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let centre = rect.center();
+                let degrees = (pointer.x - centre.x).atan2(centre.y - pointer.y).to_degrees();
+                self.set_facing(f64::from(degrees));
+            }
+        }
+        let centre = rect.center();
+        let radius = rect.width() / 2.0;
+        let painter = ui.painter_at(rect);
+        painter.circle_stroke(centre, radius, Stroke::new(1.0, Color32::GRAY));
+        if self.facing_set {
+            let angle = (self.facing_deg as f32).to_radians();
+            let tip = centre + egui::vec2(angle.sin(), -angle.cos()) * radius;
+            painter.line_segment([centre, tip], Stroke::new(2.0, Color32::LIGHT_RED));
+        }
+
+        let mut degrees = self.facing_deg;
+        if ui
+            .add(egui::DragValue::new(&mut degrees).range(0.0..=359.0).suffix("°"))
+            .changed()
+        {
+            self.set_facing(degrees);
+        }
+        let note = match (self.facing_set, self.compass) {
+            (false, _) => "Facing not set: drag the dial",
+            (true, false) => "Manual facing (no compass on this Mac)",
+            (true, true) => "Facing set",
+        };
+        ui.label(note);
+
+        let sweep_label = if self.sweeping { "Stop sweep" } else { "Start sweep" };
+        if ui
+            .add_enabled(self.facing_set || self.sweeping, egui::Button::new(sweep_label))
+            .on_hover_text("Turn through a full circle with the dial set to your facing")
+            .clicked()
+        {
+            self.toggle_sweep();
+        }
+    }
+
     fn drain_frames(&mut self) {
         loop {
             match self.frames.try_recv() {
@@ -124,14 +203,26 @@ impl ShellApp {
     }
 }
 
-fn default_pipeline() -> Pipeline {
-    let algorithms: Vec<Box<dyn Algorithm>> = vec![
+fn default_pipeline(facing: Arc<dyn HeadingSource>) -> Pipeline {
+    Pipeline::new(default_chain(facing))
+}
+
+/// Continuous bearings: a weighted mean over recent facings.
+fn default_chain(facing: Arc<dyn HeadingSource>) -> Vec<Box<dyn Algorithm>> {
+    vec![
         Box::new(RssiRanging::default()),
-        // macOS has no heading source yet, so bearings stay unset and positions are not produced.
-        Box::new(BearingEstimator::new(|| None, 64)),
+        Box::new(BearingEstimator::new(facing, 64)),
         Box::new(Fusion::default()),
-    ];
-    Pipeline::new(algorithms)
+    ]
+}
+
+/// Sweep bearings: the strongest facing after a full turn.
+fn sweep_chain(facing: Arc<dyn HeadingSource>) -> Vec<Box<dyn Algorithm>> {
+    vec![
+        Box::new(RssiRanging::default()),
+        Box::new(SweepBearing::new(facing)),
+        Box::new(Fusion::default()),
+    ]
 }
 
 impl eframe::App for ShellApp {
@@ -153,6 +244,8 @@ impl eframe::App for ShellApp {
                 if ui.button(label).clicked() {
                     self.toggle_running();
                 }
+                ui.separator();
+                self.facing_controls(ui);
             });
         });
 
@@ -251,7 +344,7 @@ fn device_list(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
     };
     let placed = frame.devices.iter().filter(|d| d.position_m.is_some()).count();
     ui.label(format!(
-        "{} devices, {} placed on the map",
+        "{} devices, {} placed on the map. Bearings and positions are relative to the facing dial.",
         frame.devices.len(),
         placed
     ));

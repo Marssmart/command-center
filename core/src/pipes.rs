@@ -22,6 +22,11 @@ impl Pipeline {
         }
     }
 
+    /// Replaces the algorithm chain. The device table is kept, so a mode change loses no devices.
+    pub fn set_algorithms(&mut self, algorithms: Vec<Box<dyn Algorithm>>) {
+        self.algorithms = algorithms;
+    }
+
     /// Updates the device table from `sample`, runs the chain, and returns the resulting frame.
     pub fn process(&mut self, sample: &RadioSample) -> ScreenFrame {
         self.frame.at = sample.observed_at;
@@ -138,6 +143,28 @@ mod tests {
         let device = frame.device("beacon").unwrap();
         assert_eq!(device.last_rssi_dbm, -60);
         assert_eq!(device.bearing_deg, Some(90.0));
+    }
+
+    #[test]
+    fn distance_and_bearing_give_position_relative_to_facing() {
+        use crate::bearing::BearingEstimator;
+        use crate::fusion::Fusion;
+        use crate::ranging::RssiRanging;
+        use spi::ManualFacing;
+
+        let facing = Arc::new(ManualFacing::new());
+        facing.set(Some(90.0));
+        let mut pipeline = Pipeline::new(vec![
+            Box::new(RssiRanging::default()),
+            Box::new(BearingEstimator::new(facing, 8)),
+            Box::new(Fusion::default()),
+        ]);
+        let frame = pipeline.process(&sample(-70, 1));
+        let device = frame.device("beacon").expect("device should be tracked");
+        let (east, north) = device.position_m.expect("distance and bearing give a position");
+        assert!(device.distance_m.unwrap() > 0.0);
+        assert!(east > 0.0, "a bearing of 90 degrees puts the device to the east");
+        assert!(north.abs() < 1e-9);
     }
 
     #[tokio::test]
