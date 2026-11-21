@@ -10,7 +10,7 @@ use std::time::Duration;
 pub mod heading;
 pub mod identity;
 pub use heading::{HeadingSource, ManualFacing};
-pub use identity::ble_fingerprint;
+pub use identity::{ble_fingerprint, ble_payload_hash};
 
 /// Failure reported by an SPI implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,15 +42,29 @@ pub enum Transport {
     Wifi,
 }
 
+/// Transport-specific facts about a sample. Shown on the device detail view; never used to match devices.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SampleDetails {
+    /// BLE manufacturer company identifiers, sorted.
+    pub manufacturer_ids: Vec<u16>,
+    /// BLE service UUIDs as 128-bit values.
+    pub service_uuids: Vec<u128>,
+    /// Hash of the BLE advertisement payload, as used by the fingerprint.
+    pub payload_hash: Option<u64>,
+    /// Wi-Fi network name, when the platform reports it.
+    pub ssid: Option<String>,
+}
+
 /// One received-signal observation from a radio scan.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RadioSample {
     pub transport: Transport,
-    /// Platform identifier: BLE peripheral UUID or Wi-Fi BSSID.
+    /// Platform identifier: BLE fingerprint or Wi-Fi BSSID.
     pub device_id: String,
     pub rssi_dbm: i16,
     /// Time since the `Clock` epoch.
     pub observed_at: Duration,
+    pub details: SampleDetails,
 }
 
 /// OS permissions that scanning may require.
@@ -121,6 +135,7 @@ mod tests {
                 device_id: "aa:bb:cc:dd:ee:ff".into(),
                 rssi_dbm: -60,
                 observed_at: Duration::from_secs(1),
+                details: Default::default(),
             })
             .map_err(|e| SpiError::Other(e.to_string()))
         }

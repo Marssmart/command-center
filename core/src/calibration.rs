@@ -192,6 +192,7 @@ fn simulate_turn(plan: &FloorPlan, truths: &[Truth], seed: u64, errors: &mut [Er
                 device_id: truth.id.clone(),
                 rssi_dbm: noisy.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16,
                 observed_at: Duration::from_millis(step as u64 * 100),
+                details: Default::default(),
             };
 
             let frame = pipeline.process(&sample);

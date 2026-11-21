@@ -17,6 +17,14 @@ pub fn ble_fingerprint<'a>(
     manufacturer_data: impl IntoIterator<Item = (u16, &'a [u8])>,
     service_uuids: impl IntoIterator<Item = u128>,
 ) -> Option<String> {
+    ble_payload_hash(manufacturer_data, service_uuids).map(|hash| format!("ble:{hash:016x}"))
+}
+
+/// FNV-1a hash of the advertisement content behind [`ble_fingerprint`]. `None` when there is none.
+pub fn ble_payload_hash<'a>(
+    manufacturer_data: impl IntoIterator<Item = (u16, &'a [u8])>,
+    service_uuids: impl IntoIterator<Item = u128>,
+) -> Option<u64> {
     let mut manufacturer: Vec<(u16, &[u8])> = manufacturer_data.into_iter().collect();
     manufacturer.sort_unstable();
     let mut services: Vec<u128> = service_uuids.into_iter().collect();
@@ -41,7 +49,7 @@ pub fn ble_fingerprint<'a>(
     for uuid in &services {
         feed(&uuid.to_be_bytes());
     }
-    Some(format!("ble:{hash:016x}"))
+    Some(hash)
 }
 
 #[cfg(test)]

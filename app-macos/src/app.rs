@@ -3,10 +3,11 @@ use core::{
     RssiRanging, SampleHub, ScreenFrame, SweepBearing,
 };
 use platform_macos::CoreLocationHeading;
-use spi::{HeadingSource, ManualFacing};
+use spi::{HeadingSource, ManualFacing, Transport};
 use crate::view3d::{self, Orbit};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Stroke};
 use std::cmp::Reverse;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -60,6 +61,8 @@ pub struct ShellApp {
     /// Whether the Mac has a compass. When it does not, the manual dial is the only facing source.
     compass: bool,
     sweeping: bool,
+    /// Device whose detail panel is open.
+    selected: Option<String>,
     task: Option<JoinHandle<()>>,
     playback: Playback,
     orbit: Orbit,
@@ -84,6 +87,7 @@ impl ShellApp {
             facing_set: false,
             compass: CoreLocationHeading::heading_available(),
             sweeping: false,
+            selected: None,
             task: None,
             playback: Playback::new(HISTORY_FRAMES),
             orbit: Orbit::default(),
@@ -249,22 +253,54 @@ impl eframe::App for ShellApp {
             });
         });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(status) = &self.status {
-                ui.colored_label(Color32::LIGHT_RED, status);
-            }
-            let frame = self.playback.current();
-            match self.tab() {
-                Tab::Overview => overview(ui, self.is_running(), frame),
-                Tab::Devices => devices(ui, frame),
-                Tab::Map => map(ui, frame),
-            Tab::View3d => {
-                device_list(ui, frame);
-                view3d::show(ui, &mut self.orbit, frame);
-            }
-                Tab::Signals => signals(ui, frame),
-            }
-        });
+        let selected = self.selected.clone();
+        let mut close_detail = false;
+        let detail = selected
+            .as_deref()
+            .and_then(|id| self.playback.current().and_then(|f| f.device(id)));
+        if let Some(device) = detail {
+            egui::Panel::right("device-detail")
+                .default_size(320.0)
+                .show(ui, |ui| {
+                    if ui.button("Close").clicked() {
+                        close_detail = true;
+                    }
+                    egui::ScrollArea::vertical().show(ui, |ui| device_detail(ui, device));
+                });
+        }
+
+        let picked = egui::CentralPanel::default()
+            .show(ui, |ui| {
+                if let Some(status) = &self.status {
+                    ui.colored_label(Color32::LIGHT_RED, status);
+                }
+                let frame = self.playback.current();
+                let selected = selected.as_deref();
+                match self.tab() {
+                    Tab::Overview => {
+                        overview(ui, self.is_running(), frame);
+                        None
+                    }
+                    Tab::Devices => devices(ui, frame, selected),
+                    Tab::Map => map(ui, frame, selected),
+                    Tab::View3d => {
+                        let listed = device_list(ui, frame, selected);
+                        view3d::show(ui, &mut self.orbit, frame, selected).or(listed)
+                    }
+                    Tab::Signals => {
+                        signals(ui, frame);
+                        None
+                    }
+                }
+            })
+            .inner;
+
+        if let Some(id) = picked {
+            self.selected = Some(id);
+        }
+        if close_detail {
+            self.selected = None;
+        }
     }
 }
 
@@ -274,15 +310,143 @@ fn overview(ui: &mut egui::Ui, running: bool, frame: Option<&ScreenFrame>) {
     ui.label(format!("Devices seen: {}", frame.map_or(0, |f| f.devices.len())));
 }
 
-fn devices(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
+fn devices(ui: &mut egui::Ui, frame: Option<&ScreenFrame>, selected: Option<&str>) -> Option<String> {
     ui.heading("Devices");
     let Some(frame) = frame else {
         ui.label("No data yet.");
-        return;
+        return None;
     };
+    let mut picked = None;
     for device in sorted_by_signal(frame) {
-        ui.label(device_line(device));
+        let is_selected = selected == Some(device.device_id.as_str());
+        if ui.selectable_label(is_selected, device_line(device)).clicked() {
+            picked = Some(device.device_id.clone());
+        }
     }
+    picked
+}
+
+fn transport_name(transport: Transport) -> &'static str {
+    match transport {
+        Transport::BluetoothLe => "Bluetooth LE",
+        Transport::Wifi => "Wi-Fi",
+    }
+}
+
+fn field(ui: &mut egui::Ui, label: &str, value: String) {
+    ui.label(label);
+    ui.label(value);
+    ui.end_row();
+}
+
+/// Everything known about one device, read from the frame currently shown.
+fn device_detail(ui: &mut egui::Ui, device: &DeviceState) {
+    ui.heading(&device.device_id);
+    egui::Grid::new("device-fields")
+        .num_columns(2)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            field(ui, "Transport", transport_name(device.transport).to_string());
+            field(ui, "Last RSSI", format!("{} dBm", device.last_rssi_dbm));
+            field(ui, "Samples", device.sample_count.to_string());
+            field(ui, "First seen", format!("{:.1} s", device.first_seen.as_secs_f64()));
+            field(ui, "Last seen", format!("{:.1} s", device.last_seen.as_secs_f64()));
+            field(
+                ui,
+                "Distance",
+                device
+                    .distance_m
+                    .map_or("not estimated".into(), |d| format!("{d:.1} m (RSSI log-distance, smoothed)")),
+            );
+            field(
+                ui,
+                "Bearing",
+                device
+                    .bearing_deg
+                    .map_or("not known (set the facing dial)".into(), |b| format!("{b:.0}° relative to facing")),
+            );
+            field(
+                ui,
+                "Position",
+                device.position_m.map_or("not known".into(), |(east, north)| {
+                    format!("east {east:.1} m, north {north:.1} m (relative to facing)")
+                }),
+            );
+        });
+
+    ui.separator();
+    ui.strong("Identity");
+    let details = &device.details;
+    egui::Grid::new("device-identity")
+        .num_columns(2)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| match device.transport {
+            Transport::BluetoothLe => {
+                let manufacturers = if details.manufacturer_ids.is_empty() {
+                    "none advertised".to_string()
+                } else {
+                    details
+                        .manufacturer_ids
+                        .iter()
+                        .map(|id| format!("0x{id:04X}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                field(ui, "Manufacturer IDs", manufacturers);
+                let services = if details.service_uuids.is_empty() {
+                    "none advertised".to_string()
+                } else {
+                    details
+                        .service_uuids
+                        .iter()
+                        .map(|uuid| format!("{uuid:032x}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                field(ui, "Service UUIDs", services);
+                field(
+                    ui,
+                    "Payload hash",
+                    details.payload_hash.map_or("not available".into(), |h| format!("{h:016x}")),
+                );
+            }
+            Transport::Wifi => {
+                field(ui, "BSSID", device.device_id.clone());
+                field(
+                    ui,
+                    "SSID",
+                    details
+                        .ssid
+                        .clone()
+                        .unwrap_or_else(|| "not reported (needs Location permission)".into()),
+                );
+            }
+        });
+
+    ui.separator();
+    ui.strong("RSSI history (dBm)");
+    rssi_plot(ui, &device.rssi_history);
+}
+
+/// Last RSSI values as a line, scaled from -100 dBm (bottom) to -30 dBm (top).
+fn rssi_plot(ui: &mut egui::Ui, history: &VecDeque<i16>) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(280.0, 90.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::DARK_GRAY), egui::StrokeKind::Inside);
+    let count = history.len();
+    if count < 2 {
+        return;
+    }
+    let points: Vec<Pos2> = history
+        .iter()
+        .enumerate()
+        .map(|(i, rssi)| {
+            let x = rect.left() + rect.width() * i as f32 / (count - 1) as f32;
+            let level = ((f32::from(*rssi) + 100.0) / 70.0).clamp(0.0, 1.0);
+            Pos2::new(x, rect.bottom() - level * rect.height())
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, Stroke::new(1.5, Color32::LIGHT_BLUE)));
 }
 
 fn signals(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
@@ -299,9 +463,9 @@ fn signals(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
     }
 }
 
-fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
-    device_list(ui, frame);
-    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
+fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>, selected: Option<&str>) -> Option<String> {
+    let listed = device_list(ui, frame, selected);
+    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
     let origin = response.rect.center();
     let ring = Stroke::new(1.0, Color32::DARK_GRAY);
     for radius_m in RING_RADII_M {
@@ -310,7 +474,7 @@ fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
     painter.circle_filled(origin, 4.0, Color32::WHITE);
 
     let Some(frame) = frame else {
-        return;
+        return listed;
     };
     // Distance without bearing: a ring with no angle, so it implies no direction.
     let distance_ring = Stroke::new(1.5, Color32::LIGHT_GREEN);
@@ -319,12 +483,19 @@ fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
             painter.circle_stroke(origin, distance as f32 * PIXELS_PER_METRE, distance_ring);
         }
     }
+    let mut points = Vec::new();
     for device in &frame.devices {
         let Some((east, north)) = device.position_m else {
             continue;
         };
         let point = to_screen(origin, PIXELS_PER_METRE, east, north);
-        painter.circle_filled(point, 5.0, Color32::LIGHT_BLUE);
+        let is_selected = selected == Some(device.device_id.as_str());
+        let (radius, fill) = if is_selected {
+            (7.0, Color32::WHITE)
+        } else {
+            (5.0, Color32::LIGHT_BLUE)
+        };
+        painter.circle_filled(point, radius, fill);
         painter.text(
             point + egui::vec2(8.0, 0.0),
             Align2::LEFT_CENTER,
@@ -332,15 +503,30 @@ fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
             FontId::proportional(12.0),
             Color32::WHITE,
         );
+        points.push((device.device_id.clone(), point));
     }
+    listed.or_else(|| nearest_click(&response, &points, 12.0))
+}
+
+/// The device whose point is nearest a click, if the click landed within `radius` pixels of one.
+pub(crate) fn nearest_click(response: &egui::Response, points: &[(String, Pos2)], radius: f32) -> Option<String> {
+    if !response.clicked() {
+        return None;
+    }
+    let pointer = response.interact_pointer_pos()?;
+    points
+        .iter()
+        .filter(|(_, point)| point.distance(pointer) <= radius)
+        .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
+        .map(|(id, _)| id.clone())
 }
 
 /// Every detected device with its placement status. Devices without a bearing are listed here
 /// because they cannot be drawn at a direction.
-fn device_list(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
+fn device_list(ui: &mut egui::Ui, frame: Option<&ScreenFrame>, selected: Option<&str>) -> Option<String> {
     let Some(frame) = frame else {
         ui.label("No data yet.");
-        return;
+        return None;
     };
     let placed = frame.devices.iter().filter(|d| d.position_m.is_some()).count();
     ui.label(format!(
@@ -348,14 +534,20 @@ fn device_list(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
         frame.devices.len(),
         placed
     ));
+    let mut picked = None;
     egui::ScrollArea::vertical()
         .id_salt("device-list")
         .max_height(120.0)
         .show(ui, |ui| {
             for device in sorted_by_signal(frame) {
-                ui.label(format!("{}  ·  {}", device_line(device), placement_note(device)));
+                let label = format!("{}  ·  {}", device_line(device), placement_note(device));
+                let is_selected = selected == Some(device.device_id.as_str());
+                if ui.selectable_label(is_selected, label).clicked() {
+                    picked = Some(device.device_id.clone());
+                }
             }
         });
+    picked
 }
 
 fn placement_note(device: &DeviceState) -> &'static str {
@@ -433,6 +625,7 @@ mod tests {
             device_id: id.into(),
             rssi_dbm: -50,
             observed_at: Duration::from_secs(1),
+            details: Default::default(),
         };
         let mut app = test_app();
         app.toggle_running();
@@ -467,14 +660,14 @@ mod tests {
 
     #[test]
     fn devices_sort_strongest_first() {
-        let device = |id: &str, rssi: i16| DeviceState {
-            device_id: id.into(),
-            transport: spi::Transport::Wifi,
-            last_rssi_dbm: rssi,
-            last_seen: Duration::ZERO,
-            distance_m: None,
-            bearing_deg: None,
-            position_m: None,
+        let device = |id: &str, rssi: i16| {
+            DeviceState::from_sample(&RadioSample {
+                transport: spi::Transport::Wifi,
+                device_id: id.into(),
+                rssi_dbm: rssi,
+                observed_at: Duration::ZERO,
+                details: Default::default(),
+            })
         };
         let frame = ScreenFrame {
             at: Duration::ZERO,
