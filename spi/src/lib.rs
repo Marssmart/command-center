@@ -7,7 +7,9 @@ use std::fmt;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
+pub mod heading;
 pub mod identity;
+pub use heading::{HeadingSource, ManualFacing};
 pub use identity::ble_fingerprint;
 
 /// Failure reported by an SPI implementation.

@@ -329,6 +329,22 @@ fn bluetooth_permission(raw: CBManagerAuthorization) -> PermissionStatus {
     }
 }
 
+/// Compass heading from CoreLocation. No heading delegate is wired yet, so it reports `None`
+/// rather than guessing. `heading_available` tells the UI whether the Mac has a compass at all.
+pub struct CoreLocationHeading;
+
+impl CoreLocationHeading {
+    pub fn heading_available() -> bool {
+        unsafe { CLLocationManager::headingAvailable_class() }
+    }
+}
+
+impl spi::HeadingSource for CoreLocationHeading {
+    fn heading_deg(&self) -> Option<f64> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

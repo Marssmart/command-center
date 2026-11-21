@@ -11,7 +11,7 @@ pub mod playback;
 pub mod ranging;
 
 pub use algorithm::{Algorithm, AlgorithmRegistry};
-pub use bearing::BearingEstimator;
+pub use bearing::{BearingEstimator, SweepBearing};
 pub use bus::{SampleHub, Subscription};
 pub use fusion::Fusion;
 pub use model::{DeviceState, ScreenFrame};
