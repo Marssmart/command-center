@@ -5,6 +5,7 @@ use crate::algorithm::Algorithm;
 use crate::bus::Subscription;
 use crate::model::{DeviceState, ScreenFrame};
 use spi::RadioSample;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 /// Owns a working frame and an ordered algorithm chain.
@@ -58,12 +59,19 @@ impl FramePipe {
 }
 
 /// Drives a pipeline until its sample subscription closes. Spawn it on the tokio runtime.
-pub async fn run_pipeline(mut samples: Subscription, mut pipeline: Pipeline, pipe: FramePipe) {
+///
+/// The pipeline is shared so its device table survives pause and resume.
+pub async fn run_pipeline(
+    mut samples: Subscription,
+    pipeline: Arc<Mutex<Pipeline>>,
+    pipe: FramePipe,
+) {
     loop {
         match samples.recv().await {
             Ok(sample) => {
+                let frame = pipeline.lock().expect("pipeline lock poisoned").process(&sample);
                 // Having no frame subscribers is not an error.
-                let _ = pipe.tx.send(pipeline.process(&sample));
+                let _ = pipe.tx.send(frame);
             }
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => break,
@@ -140,7 +148,7 @@ mod tests {
         let mut frames = pipe.subscribe();
         let task = tokio::spawn(run_pipeline(
             samples,
-            Pipeline::new(vec![Box::new(FixedBearing)]),
+            Arc::new(Mutex::new(Pipeline::new(vec![Box::new(FixedBearing)]))),
             pipe.clone(),
         ));
 

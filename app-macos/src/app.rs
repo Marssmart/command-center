@@ -5,6 +5,7 @@ use core::{
 use crate::view3d::{self, Orbit};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Stroke};
 use std::cmp::Reverse;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::TryRecvError;
@@ -48,7 +49,9 @@ pub struct ShellApp {
     hub: SampleHub,
     pipe: FramePipe,
     frames: broadcast::Receiver<ScreenFrame>,
-    pipeline: Option<JoinHandle<()>>,
+    /// Shared across pause and resume, so the device table is kept.
+    pipeline: Arc<Mutex<Pipeline>>,
+    task: Option<JoinHandle<()>>,
     playback: Playback,
     orbit: Orbit,
     status: Option<String>,
@@ -64,7 +67,8 @@ impl ShellApp {
             hub,
             pipe,
             frames,
-            pipeline: None,
+            pipeline: Arc::new(Mutex::new(default_pipeline())),
+            task: None,
             playback: Playback::new(HISTORY_FRAMES),
             orbit: Orbit::default(),
             status: None,
@@ -76,7 +80,7 @@ impl ShellApp {
     }
 
     pub fn is_running(&self) -> bool {
-        self.pipeline.is_some()
+        self.task.is_some()
     }
 
     pub fn toggle_running(&mut self) {
@@ -90,10 +94,12 @@ impl ShellApp {
     fn start(&mut self) {
         match self.hub.subscribe() {
             Ok(samples) => {
-                let task = self
-                    .runtime
-                    .spawn(run_pipeline(samples, default_pipeline(), self.pipe.clone()));
-                self.pipeline = Some(task);
+                let task = self.runtime.spawn(run_pipeline(
+                    samples,
+                    Arc::clone(&self.pipeline),
+                    self.pipe.clone(),
+                ));
+                self.task = Some(task);
                 self.status = None;
             }
             Err(err) => self.status = Some(err.to_string()),
@@ -102,7 +108,7 @@ impl ShellApp {
 
     /// Aborting drops the pipeline's subscription, which stops the scanner once no one listens.
     fn pause(&mut self) {
-        if let Some(task) = self.pipeline.take() {
+        if let Some(task) = self.task.take() {
             task.abort();
         }
     }
@@ -159,7 +165,10 @@ impl eframe::App for ShellApp {
                 Tab::Overview => overview(ui, self.is_running(), frame),
                 Tab::Devices => devices(ui, frame),
                 Tab::Map => map(ui, frame),
-            Tab::View3d => view3d::show(ui, &mut self.orbit, frame),
+            Tab::View3d => {
+                device_list(ui, frame);
+                view3d::show(ui, &mut self.orbit, frame);
+            }
                 Tab::Signals => signals(ui, frame),
             }
         });
@@ -198,6 +207,7 @@ fn signals(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
 }
 
 fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
+    device_list(ui, frame);
     let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
     let origin = response.rect.center();
     let ring = Stroke::new(1.0, Color32::DARK_GRAY);
@@ -209,6 +219,13 @@ fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
     let Some(frame) = frame else {
         return;
     };
+    // Distance without bearing: a ring with no angle, so it implies no direction.
+    let distance_ring = Stroke::new(1.5, Color32::LIGHT_GREEN);
+    for device in unplaced_with_distance(frame) {
+        if let Some(distance) = device.distance_m {
+            painter.circle_stroke(origin, distance as f32 * PIXELS_PER_METRE, distance_ring);
+        }
+    }
     for device in &frame.devices {
         let Some((east, north)) = device.position_m else {
             continue;
@@ -223,6 +240,46 @@ fn map(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
             Color32::WHITE,
         );
     }
+}
+
+/// Every detected device with its placement status. Devices without a bearing are listed here
+/// because they cannot be drawn at a direction.
+fn device_list(ui: &mut egui::Ui, frame: Option<&ScreenFrame>) {
+    let Some(frame) = frame else {
+        ui.label("No data yet.");
+        return;
+    };
+    let placed = frame.devices.iter().filter(|d| d.position_m.is_some()).count();
+    ui.label(format!(
+        "{} devices, {} placed on the map",
+        frame.devices.len(),
+        placed
+    ));
+    egui::ScrollArea::vertical()
+        .id_salt("device-list")
+        .max_height(120.0)
+        .show(ui, |ui| {
+            for device in sorted_by_signal(frame) {
+                ui.label(format!("{}  ·  {}", device_line(device), placement_note(device)));
+            }
+        });
+}
+
+fn placement_note(device: &DeviceState) -> &'static str {
+    if device.position_m.is_some() {
+        "placed"
+    } else if device.distance_m.is_some() {
+        "distance only (no bearing)"
+    } else {
+        "signal only"
+    }
+}
+
+fn unplaced_with_distance(frame: &ScreenFrame) -> impl Iterator<Item = &DeviceState> {
+    frame
+        .devices
+        .iter()
+        .filter(|d| d.position_m.is_none() && d.distance_m.is_some())
 }
 
 /// Maps an east/north offset in metres to screen pixels. North is up, so y decreases.
@@ -274,6 +331,23 @@ mod tests {
         let app = test_app();
         assert_eq!(app.tab(), Tab::Overview);
         assert!(!app.is_running());
+    }
+
+    #[test]
+    fn device_table_survives_pause_and_resume() {
+        let sample = |id: &str| RadioSample {
+            transport: spi::Transport::Wifi,
+            device_id: id.into(),
+            rssi_dbm: -50,
+            observed_at: Duration::from_secs(1),
+        };
+        let mut app = test_app();
+        app.toggle_running();
+        app.pipeline.lock().unwrap().process(&sample("first"));
+        app.toggle_running();
+        app.toggle_running();
+        let frame = app.pipeline.lock().unwrap().process(&sample("second"));
+        assert_eq!(frame.devices.len(), 2);
     }
 
     #[test]

@@ -7,6 +7,9 @@ use std::fmt;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
+pub mod identity;
+pub use identity::ble_fingerprint;
+
 /// Failure reported by an SPI implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpiError {
