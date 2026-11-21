@@ -15,6 +15,7 @@ use spi::{
     Clock, Permission, PermissionProvider, PermissionStatus, RadioSample, RadioScanner,
     RangingProvider, SpiError, Storage, Transport,
 };
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -180,12 +181,15 @@ fn spawn_ble_scan(
             };
             let _ = ready_tx.send(Ok(()));
 
+            let mut identities: HashMap<PeripheralId, String> = HashMap::new();
             while !stop.load(Ordering::Relaxed) {
                 match tokio::time::timeout(BLE_POLL_INTERVAL, events.next()).await {
                     Ok(Some(
                         CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id),
                     )) => {
-                        if let Some(sample) = ble_sample(&adapter, &id, epoch).await {
+                        if let Some(sample) =
+                            ble_sample(&adapter, &id, epoch, &mut identities).await
+                        {
                             if sink.send(sample).is_err() {
                                 break;
                             }
@@ -217,13 +221,31 @@ async fn first_adapter() -> Result<Adapter, String> {
         .ok_or_else(|| "no Bluetooth adapter found".to_string())
 }
 
-async fn ble_sample(adapter: &Adapter, id: &PeripheralId, epoch: Instant) -> Option<RadioSample> {
+async fn ble_sample(
+    adapter: &Adapter,
+    id: &PeripheralId,
+    epoch: Instant,
+    identities: &mut HashMap<PeripheralId, String>,
+) -> Option<RadioSample> {
     let peripheral = adapter.peripheral(id).await.ok()?;
-    let rssi = peripheral.properties().await.ok()??.rssi?;
+    let props = peripheral.properties().await.ok()??;
+    let device_id = match identities.get(id) {
+        Some(known) => known.clone(),
+        None => {
+            // Fixed on first sight: a later advertisement that adds data must not change the id.
+            // Peripherals with no advertised data yet are skipped until some arrives.
+            let fingerprint = spi::ble_fingerprint(
+                props.manufacturer_data.iter().map(|(c, d)| (*c, d.as_slice())),
+                props.services.iter().map(|uuid| uuid.as_u128()),
+            )?;
+            identities.insert(id.clone(), fingerprint.clone());
+            fingerprint
+        }
+    };
     Some(RadioSample {
         transport: Transport::BluetoothLe,
-        device_id: id.to_string(),
-        rssi_dbm: rssi,
+        device_id,
+        rssi_dbm: props.rssi?,
         observed_at: epoch.elapsed(),
     })
 }

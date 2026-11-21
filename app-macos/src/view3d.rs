@@ -74,19 +74,41 @@ pub fn show(ui: &mut egui::Ui, orbit: &mut Orbit, frame: Option<&ScreenFrame>) {
         return;
     };
     for device in &frame.devices {
-        let Some((east, north)) = device.position_m else {
-            continue;
-        };
-        let height = signal_height_m(device.last_rssi_dbm);
-        let point = project([east as f32, north as f32, height], *orbit, origin);
-        painter.circle_filled(point, 5.0, Color32::LIGHT_BLUE);
-        painter.text(
-            point + egui::vec2(8.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            &device.device_id,
-            egui::FontId::proportional(12.0),
-            Color32::WHITE,
-        );
+        match (device.position_m, device.distance_m) {
+            (Some((east, north)), _) => {
+                let height = signal_height_m(device.last_rssi_dbm);
+                let point = project([east as f32, north as f32, height], *orbit, origin);
+                painter.circle_filled(point, 5.0, Color32::LIGHT_BLUE);
+                painter.text(
+                    point + egui::vec2(8.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &device.device_id,
+                    egui::FontId::proportional(12.0),
+                    Color32::WHITE,
+                );
+            }
+            // Distance without bearing: a ground ring with no angle, so it implies no direction.
+            (None, Some(distance)) => {
+                draw_ground_ring(&painter, *orbit, origin, distance as f32);
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+fn draw_ground_ring(painter: &egui::Painter, orbit: Orbit, origin: Pos2, radius_m: f32) {
+    const SEGMENTS: usize = 48;
+    let stroke = Stroke::new(1.5, Color32::LIGHT_GREEN);
+    let point = |k: usize| {
+        let angle = k as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        project(
+            [radius_m * angle.cos(), radius_m * angle.sin(), 0.0],
+            orbit,
+            origin,
+        )
+    };
+    for k in 0..SEGMENTS {
+        painter.line_segment([point(k), point(k + 1)], stroke);
     }
 }
 
