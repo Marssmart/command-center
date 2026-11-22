@@ -23,8 +23,12 @@ impl Pipeline {
     }
 
     /// Replaces the algorithm chain. The device table is kept, so a mode change loses no devices.
+    /// Positions and bearings from the old chain would be stale, so they are dropped.
     pub fn set_algorithms(&mut self, algorithms: Vec<Box<dyn Algorithm>>) {
         self.algorithms = algorithms;
+        for device in &mut self.frame.devices {
+            device.clear_placement();
+        }
     }
 
     /// Updates the device table from `sample`, runs the chain, and returns the resulting frame.
@@ -147,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn distance_and_bearing_give_position_relative_to_facing() {
+    fn fixed_facing_gives_distance_but_no_position() {
         use crate::bearing::BearingEstimator;
         use crate::fusion::Fusion;
         use crate::ranging::RssiRanging;
@@ -162,10 +166,9 @@ mod tests {
         ]);
         let frame = pipeline.process(&sample(-70, 1));
         let device = frame.device("beacon").expect("device should be tracked");
-        let (east, north) = device.position_m.expect("distance and bearing give a position");
-        assert!(device.distance_m.unwrap() > 0.0);
-        assert!(east > 0.0, "a bearing of 90 degrees puts the device to the east");
-        assert!(north.abs() < 1e-9);
+        assert!(device.distance_m.is_some());
+        assert_eq!(device.bearing_deg, None, "one facing is not evidence of a bearing");
+        assert_eq!(device.position_m, None);
     }
 
     #[tokio::test]

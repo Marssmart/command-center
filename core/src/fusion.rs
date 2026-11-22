@@ -1,7 +1,8 @@
 //! Fusion: combines distance and bearing into a smoothed (east, north) position per device.
 
 use crate::algorithm::Algorithm;
-use crate::model::ScreenFrame;
+use crate::model::{PlacementMethod, ScreenFrame};
+use crate::ranging::RELATIVE_DISTANCE_ERROR;
 use spi::RadioSample;
 use std::collections::HashMap;
 
@@ -46,9 +47,21 @@ impl Algorithm for Fusion {
         else {
             return;
         };
+        // Survey positions are already solved; fusion must not overwrite them.
+        if device.placement == PlacementMethod::Survey {
+            return;
+        }
         let (Some(distance), Some(bearing)) = (device.distance_m, device.bearing_deg) else {
+            device.position_m = None;
+            device.position_uncertainty_m = None;
             return;
         };
+        // Lateral error from the bearing spread, radial error from the RSSI range model.
+        let lateral = device
+            .bearing_spread_deg
+            .map_or(0.0, |spread| distance * spread.to_radians().sin());
+        let radial = distance * RELATIVE_DISTANCE_ERROR;
+        device.position_uncertainty_m = Some(lateral.hypot(radial));
 
         let (raw_east, raw_north) = position_from_polar(distance, bearing);
         let position = match self.positions.get(&sample.device_id) {

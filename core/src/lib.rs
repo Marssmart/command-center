@@ -9,15 +9,17 @@ pub mod model;
 pub mod pipes;
 pub mod playback;
 pub mod ranging;
+pub mod survey;
 
 pub use algorithm::{Algorithm, AlgorithmRegistry};
-pub use bearing::{BearingEstimator, SweepBearing};
+pub use bearing::{has_facing_evidence, BearingEstimator, SweepBearing};
 pub use bus::{SampleHub, Subscription};
 pub use fusion::Fusion;
-pub use model::{DeviceState, ScreenFrame};
+pub use model::{DeviceState, PlacementMethod, ScreenFrame};
 pub use pipes::{run_pipeline, FramePipe, Pipeline};
 pub use playback::Playback;
 pub use ranging::RssiRanging;
+pub use survey::{solve_position, Fix, Survey, SurveyLocator};
 pub use spi::{RadioSample, Transport};
 
 #[cfg(test)]

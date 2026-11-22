@@ -1,4 +1,4 @@
-//! Core data model: per-device state and the frames screens render.
+//! Model: per-device state and the frames screens render.
 
 use spi::{RadioSample, SampleDetails, Transport};
 use std::collections::VecDeque;
@@ -6,6 +6,20 @@ use std::time::Duration;
 
 /// Most recent RSSI values kept per device for the detail plot.
 pub const RSSI_HISTORY_LEN: usize = 64;
+
+/// How a device's bearing and position were obtained. Shown to the user so placements can be weighed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlacementMethod {
+    /// Not placed: distance only, or nothing.
+    #[default]
+    Unplaced,
+    /// Continuous bearing from the manual facing dial, once the signal showed it varies with facing.
+    Facing,
+    /// Peak of a full-turn sweep against the facing dial.
+    Sweep,
+    /// Solved from distances measured at surveyed spots. Bearings are from map north.
+    Survey,
+}
 
 /// Latest known state of one observed device.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,12 +37,18 @@ pub struct DeviceState {
     pub rssi_history: VecDeque<i16>,
     /// Transport-specific facts from the latest accepted sample.
     pub details: SampleDetails,
-    /// Estimated distance in metres, if an algorithm has produced one.
+    /// Estimated distance in metres from RSSI. Set to the geometric distance from the current spot once surveyed.
     pub distance_m: Option<f64>,
-    /// Estimated bearing in degrees clockwise from the facing, if known.
+    /// Estimated bearing in degrees clockwise from the reference: the facing for facing modes, map north for a survey.
     pub bearing_deg: Option<f64>,
-    /// Estimated (east, north) offset from the user in metres, relative to the facing.
+    /// One standard deviation of the bearing, in degrees. Not set for surveyed bearings.
+    pub bearing_spread_deg: Option<f64>,
+    /// Estimated (east, north) offset in metres from the origin.
     pub position_m: Option<(f64, f64)>,
+    /// One standard deviation of the position, in metres.
+    pub position_uncertainty_m: Option<f64>,
+    /// Which method produced the bearing and position.
+    pub placement: PlacementMethod,
 }
 
 impl DeviceState {
@@ -45,7 +65,10 @@ impl DeviceState {
             details: sample.details.clone(),
             distance_m: None,
             bearing_deg: None,
+            bearing_spread_deg: None,
             position_m: None,
+            position_uncertainty_m: None,
+            placement: PlacementMethod::Unplaced,
         }
     }
 
@@ -62,6 +85,15 @@ impl DeviceState {
             self.rssi_history.pop_front();
         }
         self.details = sample.details.clone();
+    }
+
+    /// Drops the bearing and position so a different method can take over. Distance is kept.
+    pub fn clear_placement(&mut self) {
+        self.bearing_deg = None;
+        self.bearing_spread_deg = None;
+        self.position_m = None;
+        self.position_uncertainty_m = None;
+        self.placement = PlacementMethod::Unplaced;
     }
 }
 
@@ -136,6 +168,20 @@ mod tests {
         state.observe(&later);
         assert_eq!(state.details.ssid.as_deref(), Some("office"));
         assert!(state.details.manufacturer_ids.is_empty());
+    }
+
+    #[test]
+    fn clear_placement_keeps_distance() {
+        let mut state = DeviceState::from_sample(&sample("dev", -60, 1));
+        state.distance_m = Some(4.0);
+        state.bearing_deg = Some(30.0);
+        state.position_m = Some((1.0, 2.0));
+        state.placement = PlacementMethod::Sweep;
+        state.clear_placement();
+        assert_eq!(state.distance_m, Some(4.0));
+        assert_eq!(state.bearing_deg, None);
+        assert_eq!(state.position_m, None);
+        assert_eq!(state.placement, PlacementMethod::Unplaced);
     }
 
     #[test]
