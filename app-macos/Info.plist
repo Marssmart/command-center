@@ -5,6 +5,8 @@
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Command Center scans nearby Bluetooth devices to detect possible tracking hardware.</string>
     <key>NSLocationUsageDescription</key>
-    <string>Command Center uses location access to correlate Wi-Fi and Bluetooth scans with where they were captured.</string>
+    <string>macOS reveals the names and addresses of nearby Wi-Fi networks only to apps with Location access. Command Center needs them to list Wi-Fi access points. It does not read or store your location.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>macOS reveals the names and addresses of nearby Wi-Fi networks only to apps with Location access. Command Center needs them to list Wi-Fi access points. It does not read or store your location.</string>
 </dict>
 </plist>

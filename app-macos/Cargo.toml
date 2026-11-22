@@ -21,3 +21,4 @@ formats = ["app", "dmg"]
 # Ad-hoc signature; no Developer ID is available.
 signing-identity = "-"
 info-plist-path = "Info.plist"
+entitlements = "entitlements.plist"
