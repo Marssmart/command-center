@@ -1,6 +1,6 @@
 //! 3D view: devices placed in east/north/height space and projected with a draggable orbit.
 
-use crate::app::nearest_click;
+use crate::app::{nearest_click, placement_colour};
 use core::ScreenFrame;
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke};
 
@@ -9,6 +9,7 @@ const GRID_HALF_SIZE_M: f32 = 20.0;
 const GRID_STEP_M: f32 = 5.0;
 const MAX_HEIGHT_M: f32 = 10.0;
 const PITCH_LIMITS: (f32, f32) = (0.05, 1.5);
+const RING_SEGMENTS: usize = 48;
 
 /// Camera orientation: yaw turns around the vertical axis, pitch tilts toward the viewer.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,15 +40,45 @@ pub fn project(point: [f32; 3], orbit: Orbit, origin: Pos2) -> Pos2 {
 }
 
 /// Height above the ground plane, from signal strength: stronger signals sit higher.
+/// This is a visualisation choice, not a measured height.
 pub fn signal_height_m(rssi_dbm: i16) -> f32 {
     ((f32::from(rssi_dbm) + 100.0) / 70.0).clamp(0.0, 1.0) * MAX_HEIGHT_M
 }
 
+/// Draws a horizontal circle of `radius_m` around `centre` (east, north) on the ground plane.
+fn draw_ring(
+    painter: &egui::Painter,
+    orbit: Orbit,
+    origin: Pos2,
+    centre: (f32, f32),
+    radius_m: f32,
+    stroke: Stroke,
+) {
+    let point = |k: usize| {
+        let angle = k as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
+        project(
+            [
+                centre.0 + radius_m * angle.cos(),
+                centre.1 + radius_m * angle.sin(),
+                0.0,
+            ],
+            orbit,
+            origin,
+        )
+    };
+    for k in 0..RING_SEGMENTS {
+        painter.line_segment([point(k), point(k + 1)], stroke);
+    }
+}
+
+/// Shows the scene. `user` is where the user stands relative to the origin, for distance rings.
+/// Returns the device clicked, if any.
 pub fn show(
     ui: &mut egui::Ui,
     orbit: &mut Orbit,
     frame: Option<&ScreenFrame>,
     selected: Option<&str>,
+    user: (f64, f64),
 ) -> Option<String> {
     let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
     let delta = response.drag_delta();
@@ -78,51 +109,41 @@ pub fn show(
 
     let frame = frame?;
     let mut points = Vec::new();
-    for device in &frame.devices {
-        match (device.position_m, device.distance_m) {
-            (Some((east, north)), _) => {
-                let height = signal_height_m(device.last_rssi_dbm);
-                let point = project([east as f32, north as f32, height], *orbit, origin);
-                let is_selected = selected == Some(device.device_id.as_str());
-                let (radius, fill) = if is_selected {
-                    (7.0, Color32::WHITE)
-                } else {
-                    (5.0, Color32::LIGHT_BLUE)
-                };
-                painter.circle_filled(point, radius, fill);
-                points.push((device.device_id.clone(), point));
-                painter.text(
-                    point + egui::vec2(8.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    &device.device_id,
-                    egui::FontId::proportional(12.0),
-                    Color32::WHITE,
-                );
-            }
-            // Distance without bearing: a ground ring with no angle, so it implies no direction.
-            (None, Some(distance)) => {
-                draw_ground_ring(&painter, *orbit, origin, distance as f32);
-            }
-            (None, None) => {}
+    // Distance without a bearing: a ground ring around the user, with no angle implied.
+    let distance_ring = Stroke::new(1.5, Color32::from_rgba_unmultiplied(120, 220, 120, 170));
+    for device in frame.devices.iter().filter(|d| d.position_m.is_none()) {
+        if let Some(distance) = device.distance_m {
+            let centre = (user.0 as f32, user.1 as f32);
+            draw_ring(&painter, *orbit, origin, centre, distance as f32, distance_ring);
         }
     }
-    nearest_click(&response, &points, 12.0)
-}
-
-fn draw_ground_ring(painter: &egui::Painter, orbit: Orbit, origin: Pos2, radius_m: f32) {
-    const SEGMENTS: usize = 48;
-    let stroke = Stroke::new(1.5, Color32::LIGHT_GREEN);
-    let point = |k: usize| {
-        let angle = k as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-        project(
-            [radius_m * angle.cos(), radius_m * angle.sin(), 0.0],
-            orbit,
-            origin,
-        )
-    };
-    for k in 0..SEGMENTS {
-        painter.line_segment([point(k), point(k + 1)], stroke);
+    let uncertainty_ring = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 90));
+    for device in &frame.devices {
+        let Some((east, north)) = device.position_m else {
+            continue;
+        };
+        let height = signal_height_m(device.last_rssi_dbm);
+        let point = project([east as f32, north as f32, height], *orbit, origin);
+        if let Some(uncertainty) = device.position_uncertainty_m {
+            draw_ring(&painter, *orbit, origin, (east as f32, north as f32), uncertainty as f32, uncertainty_ring);
+        }
+        let is_selected = selected == Some(device.device_id.as_str());
+        let (radius, fill) = if is_selected {
+            (7.0, Color32::WHITE)
+        } else {
+            (5.0, placement_colour(device.placement))
+        };
+        painter.circle_filled(point, radius, fill);
+        painter.text(
+            point + egui::vec2(8.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            &device.device_id,
+            egui::FontId::proportional(12.0),
+            Color32::WHITE,
+        );
+        points.push((device.device_id.clone(), point));
     }
+    nearest_click(&response, &points, 12.0)
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use spi::{
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -79,7 +79,8 @@ impl RadioScanner for MacosScanner {
             return Ok(());
         }
         let stop = Arc::new(AtomicBool::new(false));
-        let ble = spawn_ble_scan(sink.clone(), Arc::clone(&stop), self.epoch)?;
+        // Not awaited: CoreBluetooth delivers its state on the main thread, so blocking here deadlocks the UI.
+        let ble = spawn_ble_scan(sink.clone(), Arc::clone(&stop), self.epoch);
         let wifi = spawn_wifi_scan(sink, Arc::clone(&stop), self.epoch);
         self.scan = Some(ActiveScan {
             stop,
@@ -139,20 +140,15 @@ impl Storage for MacosPlatform {
 }
 
 /// Starts BLE scanning on its own thread. Returns once the adapter is scanning, or the setup error.
-fn spawn_ble_scan(
-    sink: Sender<RadioSample>,
-    stop: Arc<AtomicBool>,
-    epoch: Instant,
-) -> Result<JoinHandle<()>, SpiError> {
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
-    let handle = thread::spawn(move || {
+fn spawn_ble_scan(sink: Sender<RadioSample>, stop: Arc<AtomicBool>, epoch: Instant) -> JoinHandle<()> {
+    thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
         {
             Ok(rt) => rt,
             Err(e) => {
-                let _ = ready_tx.send(Err(e.to_string()));
+                eprintln!("BLE scan setup failed: {e}");
                 return;
             }
         };
@@ -160,7 +156,7 @@ fn spawn_ble_scan(
             let adapter = match first_adapter().await {
                 Ok(adapter) => adapter,
                 Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+                    eprintln!("BLE scan setup failed: {}", e);
                     return;
                 }
             };
@@ -175,11 +171,10 @@ fn spawn_ble_scan(
             let mut events = match setup {
                 Ok(events) => events,
                 Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+                    eprintln!("BLE scan setup failed: {}", e);
                     return;
                 }
             };
-            let _ = ready_tx.send(Ok(()));
 
             let mut identities: HashMap<PeripheralId, String> = HashMap::new();
             while !stop.load(Ordering::Relaxed) {
@@ -201,13 +196,7 @@ fn spawn_ble_scan(
             }
             let _ = adapter.stop_scan().await;
         });
-    });
-
-    match ready_rx.recv() {
-        Ok(Ok(())) => Ok(handle),
-        Ok(Err(msg)) => Err(SpiError::Other(format!("BLE scan failed: {msg}"))),
-        Err(_) => Err(SpiError::Other("BLE scan thread exited during setup".into())),
-    }
+    })
 }
 
 async fn first_adapter() -> Result<Adapter, String> {

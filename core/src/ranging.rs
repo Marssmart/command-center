@@ -10,6 +10,10 @@ pub fn distance_from_rssi(rssi_dbm: f64, tx_power_dbm: f64, path_loss_exponent: 
     10f64.powf((tx_power_dbm - rssi_dbm) / (10.0 * path_loss_exponent))
 }
 
+/// One-sigma relative error of an RSSI distance, for the default path-loss exponent (2.0) and 3 dB
+/// shadowing: sigma_d / d = ln(10) * sigma_rssi / (10 * n).
+pub const RELATIVE_DISTANCE_ERROR: f64 = std::f64::consts::LN_10 * 3.0 / (10.0 * 2.0);
+
 /// Sets `distance_m` on each device from its exponentially smoothed RSSI.
 pub struct RssiRanging {
     tx_power_dbm: f64,
