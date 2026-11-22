@@ -34,6 +34,8 @@ jobs:
       - name: Verify signature and DMG
         run: |
           codesign --verify --deep --strict "target/release/Command Center.app"
+          # The hardened runtime blocks the Location prompt without this entitlement, and Wi-Fi scanning with it.
+          codesign -d --entitlements - "target/release/Command Center.app" | grep "com.apple.security.personal-information.location"
           hdiutil verify target/release/*.dmg
 
       - name: Upload DMG artifact

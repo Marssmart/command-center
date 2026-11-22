@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The bundle is signed with the hardened runtime, which refuses these resources without an entitlement.
+         Without the location one, macOS never shows the Location prompt and Wi-Fi scans return no BSSID. -->
+    <key>com.apple.security.personal-information.location</key>
+    <true/>
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
+</dict>
+</plist>

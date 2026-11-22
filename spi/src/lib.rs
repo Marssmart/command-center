@@ -5,12 +5,17 @@
 use std::error::Error;
 use std::fmt;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub mod heading;
 pub mod identity;
+pub mod status;
+pub mod wifi;
 pub use heading::{HeadingSource, ManualFacing};
 pub use identity::{ble_fingerprint, ble_payload_hash};
+pub use status::{ScanProblem, ScanState, ScanStatusBoard, ScanStatusSource};
+pub use wifi::{WifiBand, WifiSecurity};
 
 /// Failure reported by an SPI implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +56,18 @@ pub struct SampleDetails {
     pub service_uuids: Vec<u128>,
     /// Hash of the BLE advertisement payload, as used by the fingerprint.
     pub payload_hash: Option<u64>,
-    /// Wi-Fi network name, when the platform reports it.
+    /// Wi-Fi network name. `None` for a hidden network, which broadcasts no name.
     pub ssid: Option<String>,
+    /// Wi-Fi channel number.
+    pub channel: Option<u16>,
+    /// Wi-Fi frequency band.
+    pub band: Option<WifiBand>,
+    /// Wi-Fi channel width in MHz.
+    pub channel_width_mhz: Option<u16>,
+    /// Strongest security the Wi-Fi access point offers.
+    pub security: Option<WifiSecurity>,
+    /// Wi-Fi noise floor in dBm, measured on the access point's channel.
+    pub noise_dbm: Option<i16>,
 }
 
 /// One received-signal observation from a radio scan.
@@ -88,6 +103,12 @@ pub trait RadioScanner {
     fn start(&mut self, sink: Sender<RadioSample>) -> Result<(), SpiError>;
     /// Stops scanning. Calling it while stopped is a no-op.
     fn stop(&mut self);
+    /// Why each transport is or is not producing samples. `None` if the scanner does not report it.
+    ///
+    /// Take it before handing the scanner to the sample hub; it stays valid across start and stop.
+    fn scan_status(&self) -> Option<Arc<dyn ScanStatusSource>> {
+        None
+    }
 }
 
 /// Measures distance to a device that a platform can range directly (for example UWB).

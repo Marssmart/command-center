@@ -148,6 +148,11 @@ impl ShellApp {
         self.task.is_some()
     }
 
+    /// A new subscription to the frames the screens read.
+    pub fn frames(&self) -> broadcast::Receiver<ScreenFrame> {
+        self.pipe.subscribe()
+    }
+
     pub fn toggle_running(&mut self) {
         if self.is_running() {
             self.pause();
@@ -739,7 +744,7 @@ fn device_detail(ui: &mut egui::Ui, device: &DeviceState) {
                     details
                         .ssid
                         .clone()
-                        .unwrap_or_else(|| "not reported (needs Location permission)".into()),
+                        .unwrap_or_else(|| "hidden network (no name broadcast)".into()),
                 );
             }
         });
